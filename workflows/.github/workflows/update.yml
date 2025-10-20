@@ -1,0 +1,72 @@
+name: Update Roblox Server List 1
+
+on:
+  schedule:
+    - cron: '*/6 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # allow pushes with GITHUB_TOKEN
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true  # keep GITHUB_TOKEN for pushing
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Run fetch script
+        run: node fetch_servers.js
+
+      - name: Commit and push if changed (stash, pull/rebase, then reapply)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          echo "Git status before stash:"
+          git status
+
+          if ! git diff --quiet || ! git diff --cached --quiet; then
+            git stash push -m "Stash script changes for pull/rebase"
+            echo "Stashed changes."
+          else
+            echo "No changes to stash."
+          fi
+
+          BRANCH="${{ github.ref_name || 'main' }}"
+          echo "Pulling from origin/$BRANCH"
+          if ! git pull --rebase origin "$BRANCH"; then
+            echo "Pull/rebase failed. This may indicate upstream conflicts."
+            exit 1
+          fi
+
+          if git stash list | grep -q "Stash script changes"; then
+            echo "Reapplying stash..."
+            if ! git stash pop; then
+              echo "Stash pop failed (possible conflicts). Resolve manually or abort."
+              exit 1
+            fi
+          fi
+
+          echo "Git status after reapply:"
+          git status
+
+          git add server_list.json raw_responses || true
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "Update server_list.json (A)"
+            echo "Pushing to origin/$BRANCH"
+            if ! git push origin HEAD:"$BRANCH"; then
+              echo "Push failed. Check repo permissions."
+              exit 1
+            fi
+            echo "Push successful."
+          fi
